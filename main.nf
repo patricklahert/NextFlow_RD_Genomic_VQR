@@ -101,12 +101,24 @@ workflow {
     if (params.fastqc) {
         FASTQC(read_pairs_ch)
     }
+    // run fastp on read pairs and collect the output channel for downstream processes
+    if (params.fastp) {
+        fastp_ch = fastp(read_pairs_ch)
+    }
 
     // Align reads to the indexed genome
+    if (params.fastp) {
+        // If fastp was run, use its output for alignment
+        align_input_ch = fastp_ch
+    } else {
+        // If fastp was not run, use the original read pairs for alignment
+        align_input_ch = read_pairs_ch
+    }
+
     if (params.aligner == 'bwa-mem') {
-        align_ch = alignReadsBwaMem(read_pairs_ch, indexed_genome_ch.collect())
+        align_ch = alignReadsBwaMem(align_input_ch, indexed_genome_ch.collect())
     } else if (params.aligner == 'bwa-aln') {
-        align_ch = alignReadsBwaAln(read_pairs_ch, indexed_genome_ch.collect())
+        align_ch = alignReadsBwaAln(align_input_ch, indexed_genome_ch.collect())
     }
 
     // Sort BAM files

@@ -1,5 +1,5 @@
 /*
- * Run fastq on the read fastq files
+ * Run fastp on the read fastq files
  */
 process fastp {
     
@@ -17,7 +17,7 @@ process fastp {
     tuple val(sample_id), path(reads)
 
     output:
-    path "fastp_${sample_id}_trimmed/*"
+    tuple val(sample_id), path("fastp_${sample_id}_trimmed/*.fastq.gz")
 
     script:
     """
