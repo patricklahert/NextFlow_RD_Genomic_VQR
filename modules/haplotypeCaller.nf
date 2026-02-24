@@ -35,13 +35,13 @@ process haplotypeCaller {
         mv "\${genomeFasta}.dict" "\${genomeFasta%.*}.dict"
     fi
 
-    outputVcf="\$(basename ${bamFile} _sorted_dedup_recalibrated.bam).vcf"
+    outputVcf="${sample_id}.vcf"
 
     # Use GATK HaplotypeCaller to call variants in gVCF mode with specified annotations
     gatk HaplotypeCaller -R "\${genomeFasta}" -I ${bamFile} -O "\${outputVcf}" -ERC GVCF \
         -A BaseQuality -A DepthPerSampleHC -A MappingQuality -A QualByDepth \
         -A MappingQualityRankSumTest -A ReadPosRankSumTest -A FisherStrand -A StrandOddsRatio \
-        -A MappingQualityZero -A InbreedingCoeff -A BaseQualityRankSumTest -A HaplotypeFilteringAnnotation
+        -A MappingQualityZero -A BaseQualityRankSumTest
 
     echo "Sample: ${sample_id} VCF: \${outputVcf}"
 

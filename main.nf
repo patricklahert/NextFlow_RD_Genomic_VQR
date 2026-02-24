@@ -32,8 +32,7 @@ if (params.fastqc) {
     include { FASTQC } from './modules/FASTQC'
 }
 if (params.fastp) {
-    include { fastp } from './modules/fastp'
-}
+    include { fastp } from './modules/fastp'}
 include { sortBam } from './modules/sortBam'
 include { markDuplicates } from './modules/markDuplicates'
 include { indexBam } from './modules/indexBam'
@@ -54,8 +53,10 @@ if (params.aligner == 'bwa-mem') {
     include { alignReadsBwaMem } from './modules/alignReadsBwaMem'
 } else if (params.aligner == 'bwa-aln') {
     include { alignReadsBwaAln } from './modules/alignReadsBwaAln'
+} else if (params.aligner == 'bowtie2') {
+    include { indexGenomeBowtie2; alignReadsBowtie2; samToBam } from './modules/bowtie2'
 } else {
-    error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem' or 'bwa-aln'."
+    error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem', 'bwa-aln', or 'bowtie2'."
 }
 if (params.variant_caller == 'haplotype-caller') {
     include { haplotypeCaller } from './modules/haplotypeCaller'
@@ -106,7 +107,7 @@ workflow {
         fastp_ch = fastp(read_pairs_ch)
     }
 
-    // Align reads to the indexed genome
+    // Determine which channel to use for alignment based on whether fastp was run
     if (params.fastp) {
         // If fastp was run, use its output for alignment
         align_input_ch = fastp_ch
@@ -115,10 +116,23 @@ workflow {
         align_input_ch = read_pairs_ch
     }
 
+    // Align reads to the indexed genome
     if (params.aligner == 'bwa-mem') {
         align_ch = alignReadsBwaMem(align_input_ch, indexed_genome_ch.collect())
     } else if (params.aligner == 'bwa-aln') {
         align_ch = alignReadsBwaAln(align_input_ch, indexed_genome_ch.collect())
+    } else if (params.aligner == 'bowtie2') {
+        // Build bowtie2 index if requested, otherwise use pre-built index files
+        def genome_basename = params.bowtie2_genome_basename ?: file(params.genome_file).getSimpleName()
+        if (params.index_genome) {
+            bowtie2_index_ch = indexGenomeBowtie2(params.genome_file).collect()
+        } else {
+            bowtie2_index_ch = Channel.fromPath(params.bowtie2_index_files).collect()
+        }
+        align_ch = alignReadsBowtie2(align_input_ch, bowtie2_index_ch, genome_basename)
+        align_ch = samToBam(align_ch)
+    } else {
+        error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem', 'bwa-aln', or 'bowtie2'."
     }
 
     // Sort BAM files
