@@ -34,6 +34,54 @@ process combineGVCFs {
     """
 }
 
+// Merges per-sample FreeBayes VCFs (which are already final, not GVCFs) and indexes the result
+// so the output matches the tuple format expected by filterVCF / variantRecalibrator.
+process mergeFreeBayesVCFs {
+    if (params.platform == 'local') {
+        label 'process_low'
+    } else if (params.platform == 'cloud') {
+        label 'process_medium'
+    }
+    container 'variantvalidator/gatk4:4.3.0.0'
+
+    tag "${sample_ids.join('_')}"
+
+    input:
+    tuple val(sample_ids), path(vcf_files)
+    path indexFiles
+
+    output:
+    tuple val("${sample_ids.join('_')}"), file("*_merged.vcf"), file("*_merged.vcf.idx")
+
+    script:
+    def merged_sample_id = "${sample_ids.join('_')}"
+    def input_args = vcf_files instanceof List
+        ? vcf_files.collect { "-I ${it}" }.join(' ')
+        : "-I ${vcf_files}"
+
+    """
+    echo "Merging FreeBayes VCFs for samples: ${sample_ids.join(', ')}"
+
+    if [[ -n "${params.genome_file}" ]]; then
+        genomeFasta=\$(basename ${params.genome_file})
+    else
+        genomeFasta=\$(find -L . -name '*.fasta')
+    fi
+
+    if [[ -e "\${genomeFasta}.dict" ]]; then
+        mv "\${genomeFasta}.dict" "\${genomeFasta%.*}.dict"
+    fi
+
+    gatk MergeVcfs \
+        ${input_args} \
+        -O ${merged_sample_id}_merged.vcf
+
+    gatk IndexFeatureFile -I ${merged_sample_id}_merged.vcf
+
+    echo "Merge complete: ${merged_sample_id}_merged.vcf"
+    """
+}
+
 process genotypeGVCFs {
     if (params.platform == 'local') {
         label 'process_low'

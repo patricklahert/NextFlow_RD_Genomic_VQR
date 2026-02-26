@@ -47,9 +47,14 @@
                 },
                 "aligner": {
                     "type": "string",
-                    "description": "Aligner to use (bwa-mem or bwa-aln)",
+                    "description": "Aligner to use (bwa-mem, bwa-aln or bowtie2)",
                     "default": "bwa-mem",
-                    "enum": ["bwa-mem", "bwa-aln"]
+                    "enum": ["bwa-mem", "bwa-aln", "bowtie2"]
+                },
+                "fastp": {
+                    "type": "boolean",
+                    "description": "Flag to indicate if FASTP should be performed",
+                    "default": false
                 },
                 "fastqc": {
                     "type": "boolean",
@@ -70,6 +75,12 @@
                     "type": "boolean",
                     "description": "Flag to indicate if Base Quality Score Recalibration should be performed",
                     "default": false
+                },
+                "variant_caller": {
+                    "type": "string",
+                    "description": "Variant caller to use (haplotypecaller or freebayes)",
+                    "default": "haplotypecaller",
+                    "enum": ["haplotypecaller", "freebayes"]
                 },
                 "variant_recalibration": {
                     "type": "boolean",
@@ -92,8 +103,10 @@
                 "outdir",
                 "aligner",
                 "bqsr",
+                "fastp",
                 "fastqc",
                 "variant_recalibration",
+                "variant_caller",
                 "identity_analysis",
                 "degraded_dna",
                 "max_memory",

@@ -14,6 +14,7 @@ log.info """\
     qsr truth vcfs  : ${params.qsrVcfs}
     output directory: ${params.outdir}
     fastqc          : ${params.fastqc}
+    fastp           : ${params.fastp}
     aligner         : ${params.aligner}
     variant caller  : ${params.variant_caller}
     bqsr            : ${params.bqsr}
@@ -30,14 +31,15 @@ if (params.index_genome) {
 if (params.fastqc) {
     include { FASTQC } from './modules/FASTQC'
 }
+if (params.fastp) {
+    include { fastp } from './modules/fastp'}
 include { sortBam } from './modules/sortBam'
 include { markDuplicates } from './modules/markDuplicates'
 include { indexBam } from './modules/indexBam'
 if (params.bqsr) {
     include { baseRecalibrator } from './modules/BQSR'
 }
-include { combineGVCFs } from './modules/processGVCFs'
-include { genotypeGVCFs } from './modules/processGVCFs'
+include { combineGVCFs; genotypeGVCFs; mergeFreeBayesVCFs } from './modules/processGVCFs'
 if (params.variant_recalibration) {
     include { variantRecalibrator } from './modules/variantRecalibrator'
 } else {
@@ -50,11 +52,15 @@ if (params.aligner == 'bwa-mem') {
     include { alignReadsBwaMem } from './modules/alignReadsBwaMem'
 } else if (params.aligner == 'bwa-aln') {
     include { alignReadsBwaAln } from './modules/alignReadsBwaAln'
+} else if (params.aligner == 'bowtie2') {
+    include { indexGenomeBowtie2; alignReadsBowtie2; samToBam } from './modules/bowtie2'
 } else {
-    error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem' or 'bwa-aln'."
+    error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem', 'bwa-aln', or 'bowtie2'."
 }
 if (params.variant_caller == 'haplotype-caller') {
     include { haplotypeCaller } from './modules/haplotypeCaller'
+} else if (params.variant_caller == 'freebayes') {
+    include { freebayes } from './modules/freebayes'
 } else {
     error "Unsupported variant caller: ${params.variant_caller}. Please specify 'haplotype-caller'."
 }
@@ -97,12 +103,37 @@ workflow {
     if (params.fastqc) {
         FASTQC(read_pairs_ch)
     }
+    // run fastp on read pairs and collect the output channel for downstream processes
+    if (params.fastp) {
+        fastp_ch = fastp(read_pairs_ch)
+    }
+
+    // Determine which channel to use for alignment based on whether fastp was run
+    if (params.fastp) {
+        // If fastp was run, use its output for alignment
+        align_input_ch = fastp_ch
+    } else {
+        // If fastp was not run, use the original read pairs for alignment
+        align_input_ch = read_pairs_ch
+    }
 
     // Align reads to the indexed genome
     if (params.aligner == 'bwa-mem') {
-        align_ch = alignReadsBwaMem(read_pairs_ch, indexed_genome_ch.collect())
+        align_ch = alignReadsBwaMem(align_input_ch, indexed_genome_ch.collect())
     } else if (params.aligner == 'bwa-aln') {
-        align_ch = alignReadsBwaAln(read_pairs_ch, indexed_genome_ch.collect())
+        align_ch = alignReadsBwaAln(align_input_ch, indexed_genome_ch.collect())
+    } else if (params.aligner == 'bowtie2') {
+        // Build bowtie2 index if requested, otherwise use pre-built index files
+        def genome_basename = params.bowtie2_genome_basename ?: file(params.genome_file).getSimpleName()
+        if (params.index_genome) {
+            bowtie2_index_ch = indexGenomeBowtie2(params.genome_file).collect()
+        } else {
+            bowtie2_index_ch = Channel.fromPath(params.bowtie2_index_files).collect()
+        }
+        align_ch = alignReadsBowtie2(align_input_ch, bowtie2_index_ch, genome_basename)
+        align_ch = samToBam(align_ch)
+    } else {
+        error "Unsupported aligner: ${params.aligner}. Please specify 'bwa-mem', 'bwa-aln', or 'bowtie2'."
     }
 
     // Sort BAM files
@@ -139,25 +170,41 @@ workflow {
         bqsr_ch = mapDamage_ch
     }
 
-    // Run HaplotypeCaller on BQSR files
+    // Run variant calling per sample
     if (params.variant_caller == "haplotype-caller") {
         gvcf_ch = haplotypeCaller(bqsr_ch, indexed_genome_ch.collect()).collect()
+
+        // Collect all per-sample GVCFs (3-element tuples: sample_id, vcf, vcf.idx) into one channel item
+        all_gvcf_ch = gvcf_ch
+            .collect { listOfTuples ->
+                def sample_ids     = listOfTuples.collate(3).collect { it[0] }
+                def vcf_files      = listOfTuples.collate(3).collect { it[1] }
+                def vcf_index_files = listOfTuples.collate(3).collect { it[2] }
+                return tuple(sample_ids, vcf_files, vcf_index_files)
+            }
+
+        // Combine GVCFs then genotype (GATK GVCF workflow)
+        combined_gvcf_ch = combineGVCFs(all_gvcf_ch, indexed_genome_ch.collect())
+        final_vcf_ch     = genotypeGVCFs(combined_gvcf_ch, indexed_genome_ch.collect())
+
+    } else if (params.variant_caller == "freebayes") {
+        // FreeBayes outputs final genotyped VCFs (not GVCFs), so skip combineGVCFs/genotypeGVCFs
+        fb_ch = freebayes(bqsr_ch, indexed_genome_ch.collect())
+
+        // Collect all per-sample VCFs (2-element tuples: sample_id, vcf) into one channel item
+        all_fb_vcf_ch = fb_ch
+            .collect { listOfTuples ->
+                def sample_ids = listOfTuples.collate(2).collect { it[0] }
+                def vcf_files  = listOfTuples.collate(2).collect { it[1] }
+                return tuple(sample_ids, vcf_files)
+            }
+
+        // Merge per-sample VCFs and index — output matches filterVCF input format
+        final_vcf_ch = mergeFreeBayesVCFs(all_fb_vcf_ch, indexed_genome_ch.collect())
+
+    } else {
+        error "Unsupported variant caller: ${params.variant_caller}. Please specify 'haplotype-caller' or 'freebayes'."
     }
-
-    // Now we map to create separate lists for sample IDs, VCF files, and index files
-    all_gvcf_ch = gvcf_ch
-        .collect { listOfTuples ->
-            def sample_ids = listOfTuples.collate(3).collect { it[0] }   // Collect sample IDs from every 3rd element
-            def vcf_files = listOfTuples.collate(3).collect { it[1] }    // Collect VCF files
-            def vcf_index_files = listOfTuples.collate(3).collect { it[2] } // Collect VCF index files
-            return tuple(sample_ids, vcf_files, vcf_index_files)
-        }
-
-    // Combine GVCFs
-    combined_gvcf_ch = combineGVCFs(all_gvcf_ch, indexed_genome_ch.collect())
-
-    // Run GenotypeGVCFs
-    final_vcf_ch = genotypeGVCFs(combined_gvcf_ch, indexed_genome_ch.collect())
 
     // Conditionally apply variant recalibration or filtering
     if (params.variant_recalibration) {
@@ -251,6 +298,27 @@ workflow FASTQC_only {
 
     if (params.fastqc) {
         FASTQC(read_pairs_ch)
+    }
+}
+
+workflow fastp_only {
+    // Set channel to gather read_pairs
+    read_pairs_ch = Channel
+        .fromPath(params.samplesheet)
+        .splitCsv(sep: '\t')
+        .map { row ->
+            if (row.size() == 4) {
+                tuple(row[0], [row[1], row[2]])
+            } else if (row.size() == 3) {
+                tuple(row[0], [row[1]])
+            } else {
+                error "Unexpected row format in samplesheet: $row"
+            }
+        }
+    read_pairs_ch.view()
+
+    if (params.fastp) {
+        fastp(read_pairs_ch)
     }
 }
 
