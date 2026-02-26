@@ -28,6 +28,16 @@
                     "description": "Genome index files directory",
                     "format": "directory-path"
                 },
+                "bowtie2_index_files": {
+                    "type": "string",
+                    "description": "Genome index files directory",
+                    "format": "directory-path"
+                },
+                "bowtie2_genome_basename": {
+                    "type": "string",
+                    "description": "Basename for Bowtie2 index files (e.g. if index files are genome.1.bt2, genome.2.bt2, etc., the basename is 'genome')",
+                    "default": "genome"
+                },
                 "qsrVcfs": {
                     "type": "string",
                     "description": "Quality Score Recalibration files directory",
@@ -78,9 +88,9 @@
                 },
                 "variant_caller": {
                     "type": "string",
-                    "description": "Variant caller to use (haplotypecaller or freebayes)",
-                    "default": "haplotypecaller",
-                    "enum": ["haplotypecaller", "freebayes"]
+                    "description": "Variant caller to use (haplotype-caller or freebayes)",
+                    "default": "haplotype-caller",
+                    "enum": ["haplotype-caller", "freebayes"]
                 },
                 "variant_recalibration": {
                     "type": "boolean",
