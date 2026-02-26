@@ -81,8 +81,8 @@ process alignReadsBowtie2 {
         exit 1
     fi
 
-    # Validate index files are present
-    if ! ls ${genome_basename}*.bt2l 1>/dev/null 2>&1; then
+    # Validate index files are present (support both small .bt2 and large .bt2l index formats)
+    if ! ls ${genome_basename}*.bt2* 1>/dev/null 2>&1; then
         echo "ERROR: Bowtie2 index files not found for basename: ${genome_basename}" >&2
         exit 1
     fi
