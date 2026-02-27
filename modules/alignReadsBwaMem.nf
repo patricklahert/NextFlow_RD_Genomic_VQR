@@ -35,7 +35,7 @@ process alignReadsBwaMem {
             samtools addreplacerg -r "@RG\\tID:${sample_id}\\tSM:${sample_id}\\tPL:illumina" - > ${sample_id}.bam
         else
             # Single FASTQ mode
-            bwa mem -M -k 16 -t ${task.cpus} \$INDEX ${reads[0]} |
+            bwa mem -M -t ${task.cpus} \$INDEX ${reads[0]} |
             samtools view -b - |
             samtools addreplacerg -r "@RG\\tID:${sample_id}\\tSM:${sample_id}\\tPL:illumina" - > ${sample_id}.bam
         fi
