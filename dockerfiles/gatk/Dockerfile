@@ -1,12 +1,7 @@
 # Use the continuumio/miniconda3 base image
 FROM continuumio/miniconda3:23.3.1-0
 
-# Update the package list and install necessary packages using apt
-# Note: I'm running a Mac M1, and these packages do not seem to be available
-# for ARM via conda, so using apt to install
-RUN conda init bash && \
-    echo "conda activate base" > ~/.bashrc && \
-    conda config --add channels bioconda && \
+RUN conda config --add channels bioconda && \
     conda config --add channels conda-forge && \
     conda install -y gatk4==4.3.0.0 && \
     conda clean --all -f -y && \
@@ -16,6 +11,9 @@ RUN conda init bash && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get remove -y && \
     apt-get autoremove -y
+
+# Ensure conda-installed binaries are on PATH for non-interactive shells
+ENV PATH="/opt/conda/bin:$PATH"
 
 # Metadata indicating the author or maintainer of the image
 LABEL maintainer="Peter J Freeman <peter.j.freeman@manchester.ac.uk>"
