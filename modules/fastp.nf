@@ -18,6 +18,7 @@ process fastp {
 
     output:
     tuple val(sample_id), path("fastp_${sample_id}_trimmed/*.fastq.gz")
+    path("fastp_${sample_id}_trimmed/*.html")
 
     script:
     """
