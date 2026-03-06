@@ -34,51 +34,55 @@ process combineGVCFs {
     """
 }
 
-// Merges per-sample FreeBayes VCFs (which are already final, not GVCFs) and indexes the result
-// so the output matches the tuple format expected by filterVCF / variantRecalibrator.
-process mergeFreeBayesVCFs {
+// Merge per-sample FreeBayes VCFs into a multi-sample VCF using bcftools merge.
+process bcftoolsMergeVCFs {
     if (params.platform == 'local') {
-        label 'process_low'
-    } else if (params.platform == 'cloud') {
         label 'process_medium'
+    } else if (params.platform == 'cloud') {
+        label 'process_high'
     }
-    container 'variantvalidator/gatk4:4.3.0.0'
+    container 'staphb/bcftools:1.21'
 
     tag "${sample_ids.join('_')}"
 
     input:
     tuple val(sample_ids), path(vcf_files)
-    path indexFiles
 
     output:
-    tuple val("${sample_ids.join('_')}"), file("*_merged.vcf"), file("*_merged.vcf.idx")
+    tuple val("${sample_ids.join('_')}"), file("*_merged.vcf.gz"), file("*_merged.vcf.gz.tbi")
 
     script:
     def merged_sample_id = "${sample_ids.join('_')}"
-    def input_args = vcf_files instanceof List
-        ? vcf_files.collect { "-I ${it}" }.join(' ')
-        : "-I ${vcf_files}"
+    def vcf_list = vcf_files instanceof List ? vcf_files.collect { it.toString() }.join(' ') : vcf_files.toString()
+    def num_samples = vcf_files instanceof List ? vcf_files.size() : 1
 
     """
-    echo "Merging FreeBayes VCFs for samples: ${sample_ids.join(', ')}"
+    echo "Merging FreeBayes VCFs for: ${sample_ids.join(', ')}"
 
-    if [[ -n "${params.genome_file}" ]]; then
-        genomeFasta=\$(basename ${params.genome_file})
+    # Compress and index each VCF using bcftools (avoids needing bgzip/tabix separately)
+    for vcf in ${vcf_list}; do
+        if [[ ! -s "\${vcf}" ]]; then
+            echo "ERROR: VCF file is missing or empty: \${vcf}" >&2
+            exit 1
+        fi
+        bcftools view "\${vcf}" -Oz -o "\${vcf}.gz"
+        bcftools index -t "\${vcf}.gz"
+    done
+
+    if [[ "${num_samples}" -gt 1 ]]; then
+        bcftools merge *.vcf.gz -Oz -o ${merged_sample_id}_merged.vcf.gz
     else
-        genomeFasta=\$(find -L . -name '*.fasta')
+        bcftools view *.vcf.gz -Oz -o ${merged_sample_id}_merged.vcf.gz
     fi
 
-    if [[ -e "\${genomeFasta}.dict" ]]; then
-        mv "\${genomeFasta}.dict" "\${genomeFasta%.*}.dict"
+    bcftools index -t ${merged_sample_id}_merged.vcf.gz
+
+    if [[ ! -s "${merged_sample_id}_merged.vcf.gz" ]]; then
+        echo "ERROR: Merged VCF is missing or empty" >&2
+        exit 1
     fi
 
-    gatk MergeVcfs \
-        ${input_args} \
-        -O ${merged_sample_id}_merged.vcf
-
-    gatk IndexFeatureFile -I ${merged_sample_id}_merged.vcf
-
-    echo "Merge complete: ${merged_sample_id}_merged.vcf"
+    echo "bcftools merge complete: ${merged_sample_id}_merged.vcf.gz"
     """
 }
 

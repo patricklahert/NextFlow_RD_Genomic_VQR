@@ -39,7 +39,7 @@ include { indexBam } from './modules/indexBam'
 if (params.bqsr) {
     include { baseRecalibrator } from './modules/BQSR'
 }
-include { combineGVCFs; genotypeGVCFs; mergeFreeBayesVCFs } from './modules/processGVCFs'
+include { combineGVCFs; genotypeGVCFs; bcftoolsMergeVCFs } from './modules/processGVCFs'
 if (params.variant_recalibration) {
     include { variantRecalibrator } from './modules/variantRecalibrator'
 } else {
@@ -105,7 +105,7 @@ workflow {
     }
     // run fastp on read pairs and collect the output channel for downstream processes
     if (params.fastp) {
-        fastp_ch = fastp(read_pairs_ch)
+        fastp_ch = fastp(read_pairs_ch)[0]
     }
 
     // Determine which channel to use for alignment based on whether fastp was run
@@ -188,7 +188,7 @@ workflow {
         final_vcf_ch     = genotypeGVCFs(combined_gvcf_ch, indexed_genome_ch.collect())
 
     } else if (params.variant_caller == "freebayes") {
-        // FreeBayes outputs final genotyped VCFs (not GVCFs), so skip combineGVCFs/genotypeGVCFs
+        // FreeBayes outputs per-sample genotyped VCFs; merge with bcftools
         fb_ch = freebayes(bqsr_ch, indexed_genome_ch.collect())
 
         // Collect all per-sample VCFs (2-element tuples: sample_id, vcf) into one channel item
@@ -199,8 +199,8 @@ workflow {
                 return tuple(sample_ids, vcf_files)
             }
 
-        // Merge per-sample VCFs and index — output matches filterVCF input format
-        final_vcf_ch = mergeFreeBayesVCFs(all_fb_vcf_ch, indexed_genome_ch.collect())
+        // Merge per-sample VCFs into a multi-sample VCF using bcftools
+        final_vcf_ch = bcftoolsMergeVCFs(all_fb_vcf_ch)
 
     } else {
         error "Unsupported variant caller: ${params.variant_caller}. Please specify 'haplotype-caller' or 'freebayes'."

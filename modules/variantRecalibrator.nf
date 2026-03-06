@@ -23,6 +23,12 @@ process variantRecalibrator {
     script:
     def knownSitesArgsStr = knownSitesArgs.join(' ')
     def degradedDna = params.degraded_dna == "true"
+    def isFreeBayes = params.variant_caller == 'freebayes'
+    // For HaplotypeCaller, choose annotation set based on coverage
+    def hcSnpAnnotations   = degradedDna ? '-an QD -an FS -an SOR'
+                                         : '-an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR'
+    def hcIndelAnnotations = degradedDna ? '-an QD -an FS -an SOR'
+                                         : '-an QD -an DP -an FS -an SOR -an ReadPosRankSum -an MQRankSum'
 
     """
     echo "Running VQSR"
@@ -39,18 +45,49 @@ process variantRecalibrator {
         mv "\${genomeFasta}.dict" "\${genomeFasta%.*}.dict"
     fi
 
-    if ${degradedDna}; then
+    if ${isFreeBayes}; then
+        echo "FreeBayes mode: hard-filtering SNPs and INDELs (VQSR not suitable for FreeBayes VCFs)"
+        # FreeBayes does not emit GATK INFO annotations (QD, MQ, FS, SOR, etc.)
+        # and its INDELs don't match GATK training resource coordinates.
+        # Hard-filter both variant types using QUAL and DP thresholds.
+
+        # --- Extract and hard-filter SNPs ---
+        gatk SelectVariants \
+            -R "\${genomeFasta}" \
+            -V ${vcf} \
+            --select-type-to-include SNP \
+            -O ${vcf.baseName}.raw_snps.vcf
+        gatk VariantFiltration \
+            -R "\${genomeFasta}" \
+            -V ${vcf.baseName}.raw_snps.vcf \
+            --filter-expression "QUAL < 30.0" --filter-name "LowQual" \
+            --filter-expression "DP < 5"      --filter-name "LowDP" \
+            -O ${vcf.baseName}.output_SNP.vcf
+
+        # --- Extract and hard-filter INDELs ---
+        gatk SelectVariants \
+            -R "\${genomeFasta}" \
+            -V ${vcf} \
+            --select-type-to-include INDEL \
+            -O ${vcf.baseName}.raw_indels.vcf
+        gatk VariantFiltration \
+            -R "\${genomeFasta}" \
+            -V ${vcf.baseName}.raw_indels.vcf \
+            --filter-expression "QUAL < 30.0" --filter-name "LowQual" \
+            --filter-expression "DP < 5"      --filter-name "LowDP" \
+            -O ${vcf.baseName}.output_INDEL.vcf
+
+    elif ${degradedDna}; then
         echo "Running VQSR for degraded DNA (1x coverage)"
-        # relaxed parameters for SNPs and INDELs
+        # relaxed parameters for SNPs
         gatk VariantRecalibrator \
             -R "\${genomeFasta}" \
             -V ${vcf} \
             ${knownSitesArgsStr} \
-            -an QD -an FS -an SOR \
+            ${hcSnpAnnotations} \
             -mode SNP \
             -tranches-file ${vcf.baseName}.recalibrated_SNP.tranches \
             -O ${vcf.baseName}.recalibrated_SNP.recal
-        # Apply VQSR for SNPs
         gatk ApplyVQSR \
             -R "\${genomeFasta}" \
             -V ${vcf} \
@@ -64,11 +101,10 @@ process variantRecalibrator {
             -R "\${genomeFasta}" \
             -V ${vcf} \
             ${knownSitesArgsStr} \
-            -an QD -an FS -an SOR \
+            ${hcIndelAnnotations} \
             -mode INDEL \
             -tranches-file ${vcf.baseName}.recalibrated_INDEL.tranches \
             -O ${vcf.baseName}.recalibrated_INDEL.recal
-        # Apply VQSR for INDELs
         gatk ApplyVQSR \
             -R "\${genomeFasta}" \
             -V ${vcf} \
@@ -79,16 +115,15 @@ process variantRecalibrator {
             -O ${vcf.baseName}.output_INDEL.vcf
     else
         echo "Running VQSR for standard DNA (10x+ coverage)"
-        # stricter parameters for SNPs and INDELs
+        # stricter parameters for SNPs
         gatk VariantRecalibrator \
             -R "\${genomeFasta}" \
             -V ${vcf} \
             ${knownSitesArgsStr} \
-            -an QD -an MQ -an MQRankSum -an ReadPosRankSum -an FS -an SOR \
+            ${hcSnpAnnotations} \
             -mode SNP \
             -tranches-file ${vcf.baseName}.recalibrated_SNP.tranches \
             -O ${vcf.baseName}.recalibrated_SNP.recal
-        # Apply VQSR for SNPs
         gatk ApplyVQSR \
             -R "\${genomeFasta}" \
             -V ${vcf} \
@@ -102,11 +137,10 @@ process variantRecalibrator {
             -R "\${genomeFasta}" \
             -V ${vcf} \
             ${knownSitesArgsStr} \
-            -an QD -an DP -an FS -an SOR -an ReadPosRankSum -an MQRankSum \
+            ${hcIndelAnnotations} \
             -mode INDEL \
             -tranches-file ${vcf.baseName}.recalibrated_INDEL.tranches \
             -O ${vcf.baseName}.recalibrated_INDEL.recal
-        # Apply VQSR for INDELs
         gatk ApplyVQSR \
             -R "\${genomeFasta}" \
             -V ${vcf} \

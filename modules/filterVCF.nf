@@ -19,6 +19,7 @@ process filterVCF {
 
     script:
     def isDegradedDNA = params.degraded_dna ? 'true' : 'false'
+    def isFreeBayes = params.variant_caller == 'freebayes'
     """
     echo "Running Variant Filtration for Sample: ${vcfFile}"
 
@@ -36,7 +37,13 @@ process filterVCF {
 
     outputVcf="\$(basename ${vcfFile} .vcf)_filtered.vcf"
 
-    if [ "$isDegradedDNA" == "true" ]; then
+    if ${isFreeBayes}; then
+        echo "Running variant filtration for FreeBayes VCF (QUAL + DP only)"
+        # FreeBayes does not emit QD, MQ, FS, SOR — filter on QUAL and DP only
+        gatk VariantFiltration -R "\${genomeFasta}" -V "${vcfFile}" -O "\${outputVcf}" \
+            --filter-name "LowQual" --filter-expression "QUAL < 30.0" \
+            --filter-name "LowDP"   --filter-expression "DP < 5"
+    elif [ "$isDegradedDNA" == "true" ]; then
         echo "Running variant filtration for degraded DNA (2 x coverage)"
         gatk VariantFiltration -R "\${genomeFasta}" -V "${vcfFile}" -O "\${outputVcf}" \
             --filter-name "LowQUAL" --filter-expression "float(QUAL) < 150" \
